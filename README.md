@@ -25,6 +25,10 @@ MOCK_LAYA=1 npm run smoke
 
 `MOCK_LAYA=1` runs a deterministic stub (choice → first option at p=1.0, score → 1.0, noul → 0.0). No weights downloaded.
 
+## Dashboard
+
+`npm start` serves a React usage dashboard at `http://127.0.0.1:3777/` and auto-opens your browser. Disable with `NO_BROWSER=1` (or `CI=true`). No build step: React 18 UMD is copied into gitignored `public/vendor/` by `npm run setup` (or `node scripts/setup-vendor.mjs`). Usage counts/timings live in gitignored `data/`; request bodies are never stored.
+
 ## Endpoints
 
 Base: `http://127.0.0.1:3777`
@@ -150,6 +154,9 @@ Note for claude-code: it natively targets Anthropic (`ANTHROPIC_BASE_URL` / `ANT
 | `HF_TOKEN` | _(unset)_ | Token for gated/private HF repos |
 | `MOCK_LAYA` | _(unset)_ | `1` → deterministic stub, no download (CI/smoke) |
 | `SKIP_WARMUP` | _(unset)_ | `1` → skip eager model load on boot (lazy-load on first request) |
+| `DATA_DIR` | `data` | Directory for usage store (`events.jsonl` + `api-key.txt`); gitignored |
+| `LAYA_API_KEY` | _(generated)_ | Override for the cosmetic API key shown in the dashboard |
+| `NO_BROWSER` | _(unset)_ | `1` stops `npm start` auto-opening the dashboard browser |
 
 See `.env.example` for a copy-paste template (loaded via `process.loadEnvFile`, never committed — `.env` is gitignored).
 

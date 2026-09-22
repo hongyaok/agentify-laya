@@ -5,4 +5,6 @@ onnx/
 *.onnx.data
 .cache/
 receptron-laya/
+data/
+public/vendor/
 npm-debug.log*

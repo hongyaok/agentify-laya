@@ -8,13 +8,15 @@
     "node": ">=20"
   },
   "scripts": {
-    "setup": "npm install && node scripts/warmup.mjs",
+    "setup": "npm install && node scripts/setup-vendor.mjs && node scripts/warmup.mjs",
     "start": "node server.mjs",
     "smoke": "node scripts/smoke.mjs",
     "prefetch": "node scripts/warmup.mjs",
     "test": "node scripts/smoke.mjs"
   },
   "dependencies": {
-    "@receptron/laya": "0.1.2"
+    "@receptron/laya": "0.1.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   }
 }

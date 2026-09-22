@@ -1,112 +1,144 @@
 ---
 name: agentify-laya
-description: Use when routing or triaging input to a fixed label set, scoring urgency/priority, running binary gates, or needing calibrated classification probabilities from a cheap (~140ms) local private pre-filter. Classifier-only; never generates text.
-version: 0.1.0
+description: Use when routing, triage, scoring, or gating.
+version: 0.4.0
 license: MIT
+author: hongyaok
+platforms: [linux, macos, windows]
+metadata:
+  hermes:
+    tags: [classification, triage, decision-model]
 ---
 
 # agentify-laya
 
-Laya is a **classifier-only System-1 model**. It picks / scores / gates — it never generates text.
-This skill calls a local OpenAI-shaped server (default `http://127.0.0.1:3777`) that wraps Laya.
+> RULE: Laya is your classifier subagent for decisions; invoke it over HTTP with curl/fetch via the `terminal` tool, not via `delegate_task` spawn, not as your main model. PREFER `POST /v1/system-one`
+> with an explicit `{ state, questions }` body. Plain chat calls
+> without `questions` always fail with `400 laya_questions_missing` - by design.
 
-## WHEN to call
+Laya is a **classifier-only System-1 service**. You consult it like a specialist for a probability: when you face a small-set choice, score, or gate, you fold its calibrated answer into your own reasoning. It never generates
+text. Server default: `http://127.0.0.1:3777`. Start it with `npm start`.
 
-- Routing / triage to a **fixed set** of labels (e.g. `{"billing","tech","cancel"}`).
-- Urgency / priority **score** (0–1 or 1–5 scale).
-- Binary gates (e.g. `needs_human`, `is_spam`) via `noul`.
-- You need a **calibrated probability** (`probabilities`, `confidence`, `rl_agent.act_probability`).
-- You want a cheap (~140ms warm), **local, private pre-filter** before a big model.
+## WHEN to consult
 
-## WHEN NOT to call
+- Routing / triage to a **fixed set** of labels (`billing`, `tech`, `cancel`).
+- Urgency / priority **score** on an ordered scale.
+- Binary gates (`needs_human`, `is_spam`) via `noul`.
+- You need a **calibrated probability** (`probabilities`, `confidence`).
+- You want a cheap (~140ms warm), **local, private gut-check** before committing.
+
+## WHEN NOT to consult
 
 - Any text generation, summarization, code writing, or multi-hop reasoning.
 - More than ~20 options in one `choice` question.
-- Any option longer than ~192 tokens (`head_max_len`).
-- State longer than ~512 tokens (truncated server-side).
+- Any option longer than ~192 tokens. State longer than ~512 tokens.
 - Non-English input, unless a multilingual Laya subfolder is confirmed.
-- Do not expect token streaming: the chat shim returns the full answers JSON in one chunk.
+- Do not expect streaming: the chat shim returns answers JSON in one chunk.
 
-## Laya truth
+## Consult-then-decide protocol
 
-- Library: `@receptron/laya` (`Laya.load({ modelDir?, repo="receptron/laya-onnx", revision?, cacheDir?, ... })`, then `laya.systemOne(state, questions)`).
-- Weights: ~1.7 GB fp32 from `receptron/laya-onnx`, cached under `~/.cache/receptron-laya` (override `LAYA_CACHE`). ~2 GB RAM. ~140 ms warm per call.
-- Request convention is always `{ "state": ..., "questions": { ... } }`.
+1. Spot the small-set decision in your task (route label, urgency, gate).
+2. Call `POST /v1/system-one` with the content as `state` and one typed
+   question per decision (batch them — one call = one forward pass).
+3. Read `answers.<qid>.choice/score/noul` plus `probabilities`/`confidence`.
+4. Weigh it: high confidence → adopt as evidence and cite the probability;
+   flat distribution (top choice < ~0.5) → trust your own reasoning or
+   escalate. Laya informs the decision, it does not make it.
 
-## Question schemas
-
-```json
-{
-  "route":   { "type": "choice", "instructions": "Classify the ticket.", "criteria": { "billing": "payment/invoice issues", "tech": "bugs/errors", "cancel": "wants to cancel" } },
-  "urgency": { "type": "score",  "instructions": "Rate urgency 0-1.", "criteria": ["low", "medium", "high"] },
-  "gate":    { "type": "noul",   "instructions": "Needs a human?", "criteria": { "true": "needs human review", "false": "auto-handle is fine" } }
-}
-```
-
-`criteria` for `choice` may also be a plain array: `"criteria": ["billing", "tech", "cancel"]`.
-`criteria` for `noul` is optional.
-
-## Answer schemas
-
-```json
-{
-  "route":   { "type": "choice", "choice": "tech", "probabilities": { "tech": 0.91 }, "confidence": 0.91, "rl_agent": { "act_probability": 0.91 } },
-  "urgency": { "type": "score",  "score": 0.8, "legend": {}, "probabilities": {}, "confidence": 0.8, "rl_agent": { "act_probability": 0.8 } },
-  "gate":    { "type": "noul",   "noul": 0.2, "rl_agent": { "act_probability": 0.2 } }
-}
-```
-
-`POST /v1/system-one` (alias `POST /v1/laya/system_one`) returns `{ "model": "laya", "answers": {...}, "usage": { "input_tokens": N, "output_tokens": 0 } }`.
-
-## curl
+## Preferred call: POST /v1/system-one
 
 ```bash
-BASE=http://127.0.0.1:3777
-curl -s $BASE/healthz
-curl -s -H 'Content-Type: application/json' -d '{
-  "state": { "text": "My invoice is wrong and I want a refund" },
-  "questions": {
-    "route": { "type": "choice", "instructions": "Classify the ticket.", "criteria": ["billing", "tech", "cancel"] }
-  }
-}' $BASE/v1/system-one
+curl -s http://127.0.0.1:3777/v1/system-one \
+  -H 'Content-Type: application/json' -d '{
+    "state": { "text": "My invoice is wrong and I want a refund" },
+    "questions": {
+      "route": { "type": "choice", "instructions": "Classify the ticket.",
+        "criteria": { "billing": "payment/invoice issues", "tech": "bugs/errors", "cancel": "wants to cancel" } },
+      "urgency": { "type": "score", "instructions": "Rate urgency.",
+        "criteria": ["low", "medium", "high"] },
+      "gate": { "type": "noul", "instructions": "Needs a human?" }
+    }
+  }'
 ```
 
-Chat-completions shim (classifier-only: assistant `content` is a JSON string of answers, `completion_tokens` is 0):
+PowerShell (Windows quoting):
 
-```bash
-curl -s -H 'Content-Type: application/json' -d '{
-  "model": "laya",
-  "messages": [{ "role": "user", "content": "My invoice is wrong" }],
-  "laya": {
-    "state": { "text": "My invoice is wrong" },
-    "questions": { "route": { "type": "choice", "instructions": "Classify.", "criteria": ["billing", "tech"] } }
-  }
-}' $BASE/v1/chat/completions
+```powershell
+$body = @{ state = @{ text = "My invoice is wrong" }
+  questions = @{ route = @{ type = "choice"; instructions = "Classify."
+    criteria = @("billing","tech","cancel") } } } | ConvertTo-Json -Depth 6
+Invoke-RestMethod -Uri "http://127.0.0.1:3777/v1/system-one" `
+  -Method Post -ContentType "application/json" -Body $body
 ```
 
-## node
+Node (global fetch):
 
 ```js
-const BASE = "http://127.0.0.1:3777";
-const body = {
-  state: { text: "My invoice is wrong and I want a refund" },
-  questions: {
-    route: { type: "choice", instructions: "Classify the ticket.", criteria: ["billing", "tech", "cancel"] },
-    urgency: { type: "score", instructions: "Rate urgency 0-1.", criteria: ["low", "medium", "high"] },
-  },
-};
-const res = await fetch(`${BASE}/v1/system-one`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(body),
+const res = await fetch("http://127.0.0.1:3777/v1/system-one", {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ state: { text: "My invoice is wrong" },
+    questions: { route: { type: "choice", instructions: "Classify.",
+      criteria: ["billing","tech"] } } }),
 });
-const { answers, usage } = await res.json();
-console.log(answers.route.choice, answers.route.probabilities, usage);
+const { answers } = await res.json();
+// answers.route.choice, answers.route.probabilities, answers.route.confidence
 ```
 
-## Limits (hard fail as 400)
+`criteria` for `choice`: object map label→description, or plain array.
+`criteria` for `score`: ordered array, index 0 = lowest.
+`criteria` for `noul`: optional `{ "true": "...", "false": "..." }`.
 
-- `<20` options per `choice`; each option must fit `head_max_len` 192 tokens.
-- State truncated to `max_len` 512 tokens. JSON body limit 1 MB.
-- Missing/empty `questions` on the chat shim → `400 { "error": { "code": "laya_questions_missing", ... } }`.
-- Any `Authorization: Bearer <token>` header is accepted and ignored (`OPENAI_API_KEY=anything`).
+## Reading answers and acting
+
+- `choice`: `{ choice, probabilities, confidence, rl_agent: { act_probability } }`.
+  Act when `confidence` is high and top `probabilities` mass is concentrated.
+- `score`: expected level `score` + `legend` + per-level `probabilities`.
+- `noul`: calibrated P(true) in `noul`. Treat >0.7 as true-leaning,
+  <0.3 as false-leaning, else uncertain.
+- Worked example: ticket says "third time writing, will dispute".
+  Consult → `route.choice=billing (0.94)`, `urgency.score=2.4/3`,
+  `gate.noul=0.82`. Decision note: "Laya: billing 0.94, high urgency,
+  P(needs-human)=0.82 → route to billing queue with priority."
+- Response also carries `usage: { input_tokens, output_tokens: 0 }`
+  and alias `laya_usage`. Output tokens are always 0 (classifier-only).
+
+## Fallback: /v1/chat/completions (OpenAI-shaped shim)
+
+Use ONLY inside OpenAI-compatible tooling you cannot change. You MUST
+include `laya.questions`, or it 400s. `content` comes back as a JSON
+string of answers, `completion_tokens` is always 0.
+
+```bash
+curl -s http://127.0.0.1:3777/v1/chat/completions \
+  -H 'Content-Type: application/json' -d '{
+    "model": "laya",
+    "messages": [{ "role": "user", "content": "My invoice is wrong" }],
+    "laya": {
+      "state": { "text": "My invoice is wrong" },
+      "questions": { "route": { "type": "choice",
+        "instructions": "Classify.", "criteria": ["billing","tech"] } }
+    }
+  }'
+```
+
+The shim also accepts `questions` as JSON inside the last user message
+or a system message, but explicit `laya.questions` is the reliable path.
+`questions`-in-message only works when the ENTIRE message content is the raw JSON object — no prose before/after, no code fences — otherwise the parse is skipped and you get the same 400. Explicit `laya.questions` avoids the trap.
+Ordinary chat traffic with no `questions` anywhere → `400`.
+
+## Error playbook
+
+- `400 { code: laya_questions_missing }` → you sent `messages` with no
+  `questions`. Resend via `/v1/system-one` with `{ state, questions }`,
+  or add `laya.questions` to the chat body.
+- `400 Missing or empty questions` (system-one) → same fix.
+- `400 { code: laya_limit }` → shrink: <20 options, each option ≤192
+  tokens, state ≤512 tokens.
+- Connection refused → server is down. Run `npm start`, check `/healthz`.
+
+## Install (required — otherwise Hermes never sees this)
+
+Copy this folder into the active agent skills dir, e.g.
+`$HERMES_HOME/skills/agentify-laya/SKILL.md`, then start a new session
+(skills load at session start). Keep your chat model pointed at a real
+chat model — Laya cannot answer turns with prose.

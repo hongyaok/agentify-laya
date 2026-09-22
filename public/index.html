@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentify-laya · usage dashboard</title>
+<style>
+:root{
+  --bg:#0b0e14; --card:#121724; --border:#1e2a3f;
+  --fg:#e6edf6; --muted:#8b98ad; --accent:#5aa2ff; --green:#34d399;
+  --amber:#fbbf24; --red:#f87171; --chip:#1a2334;
+}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#16213a 0%,var(--bg) 55%) fixed,var(--bg);color:var(--fg);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1120px;margin:0 auto;padding:24px 20px 60px}
+header{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+h1{font-size:20px;margin:0}
+.sub{color:var(--muted);font-size:13px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--amber);display:inline-block;box-shadow:0 0 8px currentColor}
+.dot.ok{background:var(--green);color:var(--green)}
+.dot.warn{background:var(--amber);color:var(--amber)}
+.dot.bad{background:var(--red);color:var(--red)}
+.pill{display:inline-flex;align-items:center;gap:8px;background:var(--chip);border:1px solid var(--border);border-radius:999px;padding:6px 12px;font-size:13px}
+.grid{display:grid;gap:12px}
+.kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px}
+.card h3{margin:0 0 4px;font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.big{font-size:24px;font-weight:700}
+.note{font-size:12px;color:var(--muted)}
+.two{grid-template-columns:1fr 1fr}
+@media(max-width:800px){.two{grid-template-columns:1fr}}
+button{background:#1c2942;color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px}
+button:hover{border-color:var(--accent)}
+input[type=text]{width:100%;background:#0c1220;color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:8px;font-family:ui-monospace,monospace;font-size:12px}
+.row{display:flex;gap:8px;align-items:center}
+.row input{flex:1}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:8px;border-bottom:1px solid var(--border)}
+th{color:var(--muted);font-weight:600;font-size:12px}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid var(--border)}
+.b2xx{background:rgba(52,211,153,.12);color:var(--green)}
+.b4xx{background:rgba(251,191,36,.12);color:var(--amber)}
+.b5xx{background:rgba(248,113,113,.12);color:var(--red)}
+.part{display:flex;height:14px;border-radius:999px;overflow:hidden;background:#0c1220;border:1px solid var(--border)}
+.part div{height:100%}
+.hm{display:grid;grid-template-columns:repeat(14,1fr);gap:4px}
+.cell{aspect-ratio:1;border-radius:4px;background:#162033;border:1px solid var(--border);min-height:22px}
+.legend{font-size:12px;color:var(--muted)}
+pre{background:#0c1220;border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto;font-size:12px}
+.empty{color:var(--muted);padding:16px;text-align:center;border:1px dashed var(--border);border-radius:8px}
+.tabs{display:flex;gap:6px}
+.tabs button.on{border-color:var(--accent);color:#fff}
+a{color:var(--accent)}
+footer{margin-top:24px;color:var(--muted);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="root"><div class="empty">loading dashboard…</div></div>
+  <footer>agentify-laya · local System-1 classifier · usage store keeps counts and timings only, never request bodies</footer>
+</div>
+<script src="/vendor/react.min.js"></script>
+<script src="/vendor/react-dom.min.js"></script>
+<script>
+/* dashboard app — inline script, no src attr. Keep vendor <script src> tags above this block. */
+(function(){
+  var rootEl = document.getElementById("root");
+  if (typeof React === "undefined" || typeof ReactDOM === "undefined") {
+    rootEl.innerHTML = '<div class="empty">React vendor files missing. Run <b>npm run setup</b> once (it copies React into gitignored public/vendor/), then reload.</div>';
+    return;
+  }
+  var h = React.createElement;
+  var useState = React.useState, useEffect = React.useEffect;
+  var LIM = 25;
+
+  function ago(iso){
+    var t = new Date(iso).getTime(), d = Date.now() - t;
+    if (d < 0) return "just now";
+    var s = Math.floor(d/1e3);
+    if (s < 60) return s + "s ago";
+    var m = Math.floor(s/60);
+    if (m < 60) return m + "m ago";
+    var hh = Math.floor(m/60);
+    if (hh < 24) return hh + "h ago";
+    return Math.floor(hh/24) + "d ago";
+  }
+  function j(p){
+    return fetch(p).then(function(r){ if(!r.ok) throw new Error(p+" "+r.status); return r.json(); });
+  }
+
+  function Kpi(props){
+    return h("div", {className:"card"},
+      h("h3", null, props.label),
+      h("div", {className:"big", id:props.id}, props.value),
+      h("div", {className:"note", id:props.subId}, props.sub));
+  }
+
+  function SeriesChart(props){
+    var b = props.buckets || [];
+    if (!b.length) return h("div", {className:"empty"}, "no traffic yet — run MOCK_LAYA=1 npm run smoke");
+    var W=480, H=140, P=8;
+    var maxR = Math.max.apply(null, [1].concat(b.map(function(x){return x.requests;})));
+    var maxT = Math.max.apply(null, [1].concat(b.map(function(x){return x.input_tokens;})));
+    var bars = b.map(function(x,i){
+      var bx = P + i*(W-2*P)/b.length, bw = Math.max(1,(W-2*P)/b.length-2);
+      var hh = (x.requests/maxR)*(H-40);
+      return h("rect", {key:i, x:bx.toFixed(1), y:(H-20-hh).toFixed(1), width:bw.toFixed(1), height:hh.toFixed(1), rx:1, fill:"#5aa2ff", opacity:0.85},
+        h("title", null, x.hour + " · " + x.requests + " req · " + x.input_tokens + " tok"));
+    });
+    var line = b.map(function(x,i){
+      var bx = P + i*(W-2*P)/b.length, bw = Math.max(1,(W-2*P)/b.length-2);
+      var lx = bx + bw/2, ly = H-20-(x.input_tokens/maxT)*(H-40);
+      return (i ? "L" : "M") + lx.toFixed(1) + " " + ly.toFixed(1) + " ";
+    }).join("");
+    return h("div", null,
+      h("svg", {viewBox:"0 0 "+W+" "+H, width:"100%", role:"img"}, bars,
+        h("path", {d:line, fill:"none", stroke:"#34d399", strokeWidth:1.5})),
+      h("div", {className:"legend", id:"seriesNote"}, b.length + " hourly buckets · blue bars = requests · green line = input tokens"));
+  }
+
+  function Partition(props){
+    var tot = Math.max(1, props.parts.reduce(function(s,p){return s+p.v;},0));
+    return h("div", null,
+      h("div", {className:"note"}, props.label),
+      h("div", {className:"part"}, props.parts.map(function(p,i){
+        return h("div", {key:i, style:{width:(p.v/tot*100).toFixed(1)+"%", background:p.c}});
+      })),
+      h("div", {className:"legend"}, props.legend));
+  }
+
+  function Heatmap(props){
+    var cells = props.cells || [];
+    if (!cells.length) return h("div", {className:"empty"}, "no days yet");
+    var max = Math.max.apply(null, [1].concat(cells.map(function(c){return c.requests;})));
+    return h("div", null,
+      h("div", {className:"hm", id:"hm"}, cells.map(function(c,i){
+        var a = c.requests/max;
+        var bg = c.requests ? "rgba(90,162,255,"+(0.15+0.75*a).toFixed(2)+")" : "#162033";
+        return h("div", {key:i, className:"cell", style:{background:bg}, title:c.day+" · "+c.requests+" req · "+c.input_tokens+" tok"});
+      })),
+      h("div", {className:"legend"}, cells[0].day + " → " + cells[cells.length-1].day + " · darker = more requests"));
+  }
+
+  function CopyRow(props){
+    var st = useState("Copy"), label = st[0], setLabel = st[1];
+    function copy(){
+      function done(){ setLabel("Copied"); setTimeout(function(){setLabel("Copy");},1200); }
+      function fallback(){
+        var inp = document.getElementById(props.id);
+        if (inp) { inp.select(); try { document.execCommand("copy"); } catch(e){} }
+        done();
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(props.value).then(done, fallback);
+      } else fallback();
+    }
+    return h("div", null,
+      h("div", {className:"note"}, props.label),
+      h("div", {className:"row"},
+        h("input", {id:props.id, type:"text", readOnly:true, value:props.value}),
+        h("button", {onClick:copy}, label)));
+  }
+
+  function LogsTable(props){
+    var d = props.data;
+    if (!d) return h("div", {className:"empty"}, "loading…");
+    if (!d.logs.length) return h("div", {className:"empty"}, "no traffic yet — run MOCK_LAYA=1 npm run smoke");
+    return h("div", null,
+      h("div", {className:"note"},
+        d.total + " total · showing " + (d.offset+1) + "–" + Math.min(d.total, d.offset+d.logs.length)),
+      h("table", null,
+        h("tr", null, ["when","endpoint","status","latency","tokens in","q","mock"].map(function(c){
+          return h("th", {key:c}, c);
+        })),
+        d.logs.map(function(e,i){
+          var cls = e.status < 400 ? "b2xx" : (e.status < 500 ? "b4xx" : "b5xx");
+          return h("tr", {key:i},
+            h("td", {title:e.iso}, ago(e.iso)),
+            h("td", null, String(e.endpoint)),
+            h("td", null, h("span", {className:"badge "+cls}, e.status),
+              e.error_code ? h("span", {className:"note"}, " " + e.error_code) : null),
+            h("td", null, e.latency_ms + " ms"),
+            h("td", null, e.input_tokens),
+            h("td", null, e.q_count + " ",
+              h("span", {className:"note"}, "c"+(e.q_types.choice||0)+"/s"+(e.q_types.score||0)+"/n"+(e.q_types.noul||0))),
+            h("td", null, e.mock ? "yes" : "no"));
+        })));
+  }
+
+  var SHAPE = '{\n  "state": { "text": "My invoice is wrong and I want a refund" },\n  "questions": {\n    "route": { "type": "choice", "instructions": "Classify.", "criteria": ["billing","tech"] },\n    "urgency": { "type": "score", "instructions": "Rate urgency.", "criteria": ["low","high"] },\n    "gate": { "type": "noul", "instructions": "Needs a human?" }\n  }\n}';
+
+  function App(){
+    var sHealth = useState(null), health = sHealth[0], setHealth = sHealth[1];
+    var sStats = useState(null), stats = sStats[0], setStats = sStats[1];
+    var sCfg = useState(null), cfg = sCfg[0], setCfg = sCfg[1];
+    var sSeries = useState([]), series = sSeries[0], setSeries = sSeries[1];
+    var sHm = useState([]), hm = sHm[0], setHm = sHm[1];
+    var sLogs = useState(null), logs = sLogs[0], setLogs = sLogs[1];
+    var sRange = useState("24h"), range = sRange[0], setRange = sRange[1];
+    var sOff = useState(0), logOff = sOff[0], setLogOff = sOff[1];
+    var sErr = useState(false), unreachable = sErr[0], setUnreachable = sErr[1];
+
+    function loadLogs(off){
+      j("/api/logs?limit="+LIM+"&offset="+off).then(setLogs).catch(function(){});
+    }
+    useEffect(function(){
+      var stop = false;
+      function tick(){
+        Promise.all([j("/healthz"), j("/api/stats"), j("/api/config")]).then(function(r){
+          if (stop) return;
+          setHealth(r[0]); setStats(r[1]); setCfg(r[2]); setUnreachable(false);
+        }).catch(function(){ if (!stop) setUnreachable(true); });
+        j("/api/series?range="+range).then(function(s){ if(!stop) setSeries(s.buckets||[]); }).catch(function(){});
+        j("/api/heatmap?days=14").then(function(x){ if(!stop) setHm(x.cells||[]); }).catch(function(){});
+        loadLogs(logOff);
+      }
+      tick();
+      var t = setInterval(tick, 5000);
+      return function(){ stop = true; clearInterval(t); };
+    }, [range, logOff]);
+
+    var dotCls = "dot " + (!health || !health.loaded ? "bad" : (cfg && cfg.mock ? "warn" : "ok"));
+    var statusText = unreachable ? "unreachable"
+      : (!health ? "loading…" : (health.loaded ? ((cfg && cfg.mock) ? "mock mode · operational" : "operational") : "not loaded"));
+    var modeText = (cfg && cfg.mock ? "mock" : "live") + " · " + ((health && health.loaded) ? "model ready" : "model not loaded");
+    var curl = cfg ? ("curl -s -H 'Content-Type: application/json' -H 'Authorization: ' + 'Bearer ' + (cfg.apiKey||'KEY') + ' -d ..." + (cfg.systemOneUrl||"")) : "";
+
+    return h("div", null,
+      h("header", null,
+        h("h1", null, "agentify-laya"),
+        h("span", {className:"pill"}, h("span", {id:"dot", className:dotCls}), h("span", {id:"statusText"}, statusText)),
+        h("span", {className:"sub"}, "local System-1 classifier · ", h("span", {id:"modeText"}, modeText))),
+      h("div", {className:"grid kpis", id:"kpis"},
+        h(Kpi, {label:"Requests", id:"kReq", value:stats?stats.totalRequests:"–", subId:"kUp", sub:stats?("since "+new Date(stats.startedAt).toLocaleString()):"–"}),
+        h(Kpi, {label:"Input tokens", id:"kIn", value:stats?stats.totalInputTokens:"–", sub:"sum of Laya input_tokens"}),
+        h(Kpi, {label:"Output tokens", id:"kOut", value:"0", sub:"classifier-only · always 0"}),
+        h(Kpi, {label:"Error rate", id:"kErr", value:stats?((stats.errorRate*100).toFixed(1)+"%"):"–", subId:"kErrN", sub:stats?(stats.errors+" errors"):"–"}),
+        h(Kpi, {label:"Latency p50 / p95", id:"kLat", value:stats?(stats.latency.p50_ms+" / "+stats.latency.p95_ms+" ms"):"–", sub:stats?("avg "+stats.latency.avg_ms+" ms · max "+stats.latency.max_ms+" ms"):"–"})),
+      h("p", null),
+      h("div", {className:"grid two"},
+        h("div", {className:"card"},
+          h("h3", null, "Requests + tokens over time"),
+          h("div", {className:"tabs"},
+            h("button", {id:"b24", className:range==="24h"?"on":"", onClick:function(){setRange("24h");}}, "24h"),
+            h("button", {id:"b7d", className:range==="7d"?"on":"", onClick:function(){setRange("7d");}}, "7d")),
+          h("div", {id:"series"}, h(SeriesChart, {buckets:series}))),
+        h("div", {className:"card"},
+          h("h3", null, "Mix (partition bar)"),
+          h(Partition, {label:"endpoint split", parts:[
+            {v:stats?(stats.byEndpoint["system-one"]||0):0, c:"#5aa2ff"},
+            {v:stats?(stats.byEndpoint.chat||0):0, c:"#34d399"}],
+            legend:stats?("system-one "+(stats.byEndpoint["system-one"]||0)+" · chat "+(stats.byEndpoint.chat||0)):"–"}),
+          h("p", null),
+          h(Partition, {label:"question-type split", parts:[
+            {v:stats?(stats.qTypes.choice||0):0, c:"#5aa2ff"},
+            {v:stats?(stats.qTypes.score||0):0, c:"#fbbf24"},
+            {v:stats?(stats.qTypes.noul||0):0, c:"#34d399"}],
+            legend:stats?("choice "+(stats.qTypes.choice||0)+" · score "+(stats.qTypes.score||0)+" · noul "+(stats.qTypes.noul||0)):"–"}))),
+      h("p", null),
+      h("div", {className:"card"},
+        h("h3", null, "Activity heatmap · last 14 days"),
+        h("div", {id:"hmWrap"}, h(Heatmap, {cells:hm}))),
+      h("p", null),
+      h("div", {className:"card"},
+        h("h3", null, "Connect · copy your endpoint + key"),
+        h("div", {className:"note"}, "localhost-only, no passwords. The server accepts any Authorization header, so this key is cosmetic."),
+        h("p", null),
+        h("div", {className:"grid", style:{gap:"8px"}},
+          h(CopyRow, {id:"cBase", label:"Base URL", value:cfg?(cfg.baseUrl||""):""}),
+          h(CopyRow, {id:"cSys", label:"System-one URL", value:cfg?(cfg.systemOneUrl||""):""}),
+          h(CopyRow, {id:"cChat", label:"Chat URL", value:cfg?(cfg.chatUrl||""):""}),
+          h(CopyRow, {id:"cModel", label:"Model", value:cfg?(cfg.model||"laya"):"laya"}),
+          h(CopyRow, {id:"cKey", label:"API key (cosmetic)", value:cfg?(cfg.apiKey||""):""})),
+        h("p", null),
+        h("div", {className:"note"}, "curl sample"),
+        h("pre", {id:"curlSample"}, curl)),
+      h("p", null),
+      h("div", {className:"card"},
+        h("h3", null, "Logs · timeline (relative time)"),
+        h("div", {className:"row", style:{marginBottom:"8px"}},
+          h("button", {id:"prev", onClick:function(){var o=Math.max(0,logOff-LIM); setLogOff(o); loadLogs(o);}}, "← newer"),
+          h("button", {id:"next", onClick:function(){var o=logOff+LIM; setLogOff(o); loadLogs(o);}}, "older →")),
+        h("div", {id:"logs"}, h(LogsTable, {data:logs}))),
+      h("p", null),
+      h("div", {className:"card"},
+        h("h3", null, "Request shape (JSON viewer)"),
+        h("div", {className:"note"}, "every call is { state, questions }. No prompts, no generation."),
+        h("pre", {id:"shape"}, SHAPE))
+    );
+  }
+
+  var mount;
+  if (ReactDOM.createRoot) {
+    mount = function(){ ReactDOM.createRoot(document.getElementById("root")).render(h(App)); };
+  } else {
+    mount = function(){ ReactDOM.render(h(App), document.getElementById("root")); };
+  }
+  mount();
+})();
+</script>
+</body>
+</html>
