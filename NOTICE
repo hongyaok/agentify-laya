@@ -1,0 +1,13 @@
+agentify-laya bundles code under MIT (see LICENSE).
+
+Model weights:
+- Laya weights are published by Convai Innovations under Apache 2.0.
+- This repo does not ship weights. On first run they are downloaded
+  from Hugging Face repo receptron/laya-onnx (~1.7 GB fp32) and cached
+  locally. See README for LAYA_CACHE and revision pinning.
+
+Upstream:
+- Laya Node library by receptron, MIT:
+  https://github.com/receptron/laya
+- Laya checkpoint by Convai Innovations:
+  https://huggingface.co/convaiinnovations/laya

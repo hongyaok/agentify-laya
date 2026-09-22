@@ -1,0 +1,20 @@
+{
+  "name": "agentify-laya",
+  "version": "0.1.0",
+  "description": "Run Laya System-1 decision model locally behind an OpenAI-shaped API",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "npm install && node scripts/warmup.mjs",
+    "start": "node server.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "prefetch": "node scripts/warmup.mjs",
+    "test": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@receptron/laya": "0.1.2"
+  }
+}
